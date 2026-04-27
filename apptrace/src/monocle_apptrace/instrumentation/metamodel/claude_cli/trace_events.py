@@ -9,9 +9,11 @@ sessions is available in one place.
 """
 
 import json
+import logging
 import os
-import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Project root is one level above the hooks/ directory
 TRACE_FILE = Path(__file__).parent.parent / ".monocle_claude_trace.jsonl"
@@ -38,7 +40,8 @@ def mark_subagent_session(agent_id: str) -> None:
     f = _subagent_sessions_file()
     try:
         known = json.loads(f.read_text()) if f.exists() else []
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Error reading subagent sessions file: {e}")
         known = []
     if agent_id not in known:
         known.append(agent_id)
@@ -50,9 +53,19 @@ def is_subagent_session(session_id: str) -> bool:
     f = _subagent_sessions_file()
     try:
         return session_id in (json.loads(f.read_text()) if f.exists() else [])
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Error reading subagent sessions file: {e}")
         return False
 
 
-def _log(msg: str) -> None:
-    print(f"[trace] {msg}", file=sys.stderr)
+def unmark_subagent_sessions(agent_ids: list) -> None:
+    """Remove agent_ids from the subagent sessions registry once the parent session ends."""
+    if not agent_ids:
+        return
+    f = _subagent_sessions_file()
+    try:
+        known = json.loads(f.read_text()) if f.exists() else []
+        pruned = [aid for aid in known if aid not in agent_ids]
+        f.write_text(json.dumps(pruned))
+    except Exception as e:
+        logger.debug(f"Error updating subagent sessions file: {e}")

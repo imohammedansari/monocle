@@ -9,9 +9,7 @@ class ClaudeSpanHandler(SpanHandler):
     @staticmethod
     def _iso_to_ns(ts_str: str) -> int:
         """Convert an ISO 8601 timestamp string to nanoseconds since Unix epoch."""
-        return int(datetime.datetime.fromisoformat(ts_str).timestamp() * 1e9)
-        ## dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-        ## return int(dt.timestamp() * 1e9)
+        return int(datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp() * 1e9)
 
     def _set_span_times(self, kwargs):
         # Set the span start and end times based on the arguments

@@ -1,6 +1,9 @@
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, Tuple
+
+logger = logging.getLogger(__name__)
 
 _DESCRIPTION_FIELDS = ("description", "command", "query", "url", "file_path", "pattern", "path")
 
@@ -14,27 +17,14 @@ def extract_agent_response(result) -> str:
         return result
     return str(result) if result else ""
 
-
-def get_agent_type(arguments) -> str:
-    return "agent.claude_cli"
-
-
-def get_agent_name(arguments) -> str:
-    return "Claude Code"
-
-
-# Tool-level accessors 
-
 def get_tool_type(arguments) -> str:
     tool_name = arguments["kwargs"].get("tool_name", "")
     if tool_name.startswith("mcp__"):
         return "tool.mcp"
     return "tool.claude_cli"
 
-
 def get_tool_name(arguments) -> str:
     return arguments["kwargs"].get("tool_name", "")
-
 
 def get_tool_description(arguments) -> str:
     tool_name = arguments["kwargs"].get("tool_name", "")
@@ -49,13 +39,11 @@ def get_tool_description(arguments) -> str:
                 return val[:120]
     return tool_name
 
-
 def extract_tool_input(arguments) -> str:
     tool_input = arguments["kwargs"].get("tool_input", {})
     if isinstance(tool_input, dict):
         return json.dumps(tool_input)
     return str(tool_input) if tool_input else ""
-
 
 def extract_tool_response(result) -> str:
     if isinstance(result, dict):
@@ -64,8 +52,6 @@ def extract_tool_response(result) -> str:
         return json.dumps(result)
     return str(result) if result else ""
 
-
-# Token counting
 def read_transcript_tokens(transcript_path: str, start_line: int = 0) -> Dict[str, int]:
     """Sum assistant message usage from transcript lines at or after start_line.
 
@@ -106,9 +92,11 @@ def read_transcript_tokens(transcript_path: str, start_line: int = 0) -> Dict[st
                 total_cache_read += usage.get("cache_read_input_tokens", 0)
                 total_cache_creation += usage.get("cache_creation_input_tokens", 0)
                 total_output += usage.get("output_tokens", 0)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"skipping transcript line: {e}")
                 continue
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Error reading transcript {transcript_path}: {e}")
         return {}
 
     prompt_t = total_input + total_cache_read + total_cache_creation
@@ -123,7 +111,6 @@ def read_transcript_tokens(transcript_path: str, start_line: int = 0) -> Dict[st
         "cache_read_tokens": total_cache_read,
         "cache_creation_tokens": total_cache_creation,
     }
-
 
 def read_subagent_transcript(transcript_path: str) -> Tuple[str, Dict[str, int]]:
     """Read model name and token totals from a subagent transcript JSONL.
@@ -161,9 +148,11 @@ def read_subagent_transcript(transcript_path: str) -> Tuple[str, Dict[str, int]]
                 total_cache_read += usage.get("cache_read_input_tokens", 0)
                 total_cache_creation += usage.get("cache_creation_input_tokens", 0)
                 total_output += usage.get("output_tokens", 0)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"skipping transcript line: {e}")
                 continue
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Error reading subagent transcript {transcript_path}: {e}")
         return "claude", {}
 
     prompt_t = total_input + total_cache_read + total_cache_creation
@@ -178,7 +167,6 @@ def read_subagent_transcript(transcript_path: str) -> Tuple[str, Dict[str, int]]
         "cache_read_tokens": total_cache_read,
         "cache_creation_tokens": total_cache_creation,
     }
-
 
 def build_subagent_tokens(usage: Dict[str, Any]) -> Dict[str, int]:
     """Build token metadata dict from PostToolUse(Agent) tool_response.usage."""

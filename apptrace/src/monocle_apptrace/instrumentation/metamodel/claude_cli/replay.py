@@ -16,49 +16,19 @@ import os
 import sys
 from pathlib import Path
 
-from monocle_apptrace.instrumentation.metamodel.claude_cli.trace_events import _session_log, _log
+from monocle_apptrace.instrumentation.metamodel.claude_cli.trace_events import _session_log
+
+logger = logging.getLogger(__name__)
 
 
 def _configure_telemetry():
-    """Configure Monocle telemetry for the hook handler.
-
-    Precedence (highest → lowest):
-      1. Environment variables
-      2. ~/.monocle/config.json
-      3. Built-in defaults
-    """
-    config_path = Path("~/.monocle/config.json").expanduser()
-    config = {}
-    if config_path.exists():
-        try:
-            config = json.loads(config_path.read_text())
-        except Exception:
-            pass
-
-    api_key = os.environ.get("OKAHU_API_KEY") or config.get("okahu_api_key")
-    endpoint = os.environ.get("OKAHU_INGESTION_ENDPOINT") or config.get("okahu_endpoint")
-    exporter = os.environ.get("MONOCLE_EXPORTER") or config.get("monocle_exporter")
     workflow_name = (
         os.environ.get("MONOCLE_WORKFLOW_NAME")
         or os.environ.get("DEFAULT_WORKFLOW_NAME")
-        or config.get("workflow_name")
         or "claude-cli"
     )
-    debug = os.environ.get("MONOCLE_CLAUDE_DEBUG", "").lower() in ("1", "true", "yes")
-
-    if api_key:
-        os.environ["OKAHU_API_KEY"] = api_key
-    if endpoint:
-        os.environ["OKAHU_INGESTION_ENDPOINT"] = endpoint
-
-    if not exporter:
-        exporter = "okahu,file" if api_key else "file"
-
-    if debug:
-        logging.basicConfig(level=logging.DEBUG)
-
     from monocle_apptrace.instrumentation.common.instrumentor import setup_monocle_telemetry
-    setup_monocle_telemetry(workflow_name=workflow_name, monocle_exporters_list=exporter)
+    setup_monocle_telemetry(workflow_name=workflow_name)
 
 
 _configure_telemetry()
@@ -196,14 +166,15 @@ def _derive_inference_rounds(turn_events: list, prompt_ts: str, stop_ts: str, mo
 
 # ── Turn processor ────────────────────────────────────────────────────────────
 
-def _process_turn(turn_events: list, session_id: str, model: str, handler: ReplayHandler, transcript_start_line: int = 0) -> None:
+def _collect_turn_events(turn_events: list) -> tuple:
+    """Correlate sequential hook events into structured turn data."""
     prompt_event = None
     stop_event = None
-    pending_tools: dict = {}        # tool_use_id → PreToolUse event (parent session)
-    pending_agent_tools: list = []  # buffered PreToolUse(Agent) events, ordered
-    subagent_data: dict = {}        # agent_id → collected subagent info
-    subagent_order: list = []       # agent_ids in SubagentStart order
-    parent_tool_calls: list = []    # completed parent-session tool calls
+    pending_tools: dict = {}
+    pending_agent_tools: list = []
+    subagent_data: dict = {}
+    subagent_order: list = []
+    parent_tool_calls: list = []
 
     for event in turn_events:
         name = event.get("hook_event_name", "")
@@ -259,22 +230,10 @@ def _process_turn(turn_events: list, session_id: str, model: str, handler: Repla
         elif name in ("Stop", "StopFailure"):
             stop_event = event
 
-    if not prompt_event or not stop_event:
-        return
+    return prompt_event, stop_event, parent_tool_calls, subagent_order, subagent_data
 
-    prompt_ts = prompt_event.get("timestamp", "")
-    stop_ts = stop_event.get("timestamp", "")
 
-    inference_rounds = _derive_inference_rounds(turn_events, prompt_ts, stop_ts, model)
-
-    transcript_path = stop_event.get("transcript_path", "")
-    parent_tokens = read_transcript_tokens(transcript_path, start_line=transcript_start_line)
-
-    if inference_rounds:
-        if parent_tokens:
-            inference_rounds[-1]["tokens"] = parent_tokens
-        inference_rounds[-1]["output_text"] = stop_event.get("last_assistant_message", "")
-
+def _build_subagents(subagent_order: list, subagent_data: dict, model: str) -> list:
     subagents = []
     for sa_id in subagent_order:
         sd = subagent_data.get(sa_id, {})
@@ -293,6 +252,28 @@ def _process_turn(turn_events: list, session_id: str, model: str, handler: Repla
             SPAN_START_TIME: sd.get("start_time"),
             SPAN_END_TIME: sd.get("end_time"),
         })
+    return subagents
+
+
+def _process_turn(turn_events: list, session_id: str, model: str, handler: ReplayHandler, transcript_start_line: int = 0) -> None:
+    prompt_event, stop_event, parent_tool_calls, subagent_order, subagent_data = _collect_turn_events(turn_events)
+
+    if not prompt_event or not stop_event:
+        return
+
+    prompt_ts = prompt_event.get("timestamp", "")
+    stop_ts = stop_event.get("timestamp", "")
+    inference_rounds = _derive_inference_rounds(turn_events, prompt_ts, stop_ts, model)
+
+    transcript_path = stop_event.get("transcript_path", "")
+    parent_tokens = read_transcript_tokens(transcript_path, start_line=transcript_start_line)
+
+    if inference_rounds:
+        if parent_tokens:
+            inference_rounds[-1]["tokens"] = parent_tokens
+        inference_rounds[-1]["output_text"] = stop_event.get("last_assistant_message", "")
+
+    subagents = _build_subagents(subagent_order, subagent_data, model)
 
     if stop_event.get("hook_event_name") == "StopFailure":
         handler._stop_failure = stop_event.get("error", "")
@@ -351,7 +332,7 @@ def replay_compaction(session_id: str) -> None:
         None,
     )
 
-    model = "claude"
+    model = _load_state(session_id).get("model", "claude")
     tokens = {}
     if compaction_stop:
         agent_path = compaction_stop.get("agent_transcript_path", "")
@@ -360,7 +341,7 @@ def replay_compaction(session_id: str) -> None:
     if not tokens:
         tokens = read_transcript_tokens(pre.get("transcript_path", ""))
 
-    _log(f"--- Compaction replay for session {session_id} ---")
+    logger.debug(f"--- Compaction replay for session {session_id} ---")
     handler = ReplayHandler()
     handler.handle_inference_round(
         input_text="",
@@ -375,7 +356,34 @@ def replay_compaction(session_id: str) -> None:
             AGENT_SESSION: session_id,
         },
     )
-    _log("--- Compaction replay done ---")
+    logger.debug("--- Compaction replay done ---")
+
+
+def cleanup_session(session_id: str) -> None:
+    """Delete per-session working files after a SessionEnd.
+
+    Replays any unprocessed events first so no turn is silently dropped
+    (guards against crashes where Stop was missed before SessionEnd fired).
+    Also prunes the session's subagent IDs from the shared registry.
+    """
+    from monocle_apptrace.instrumentation.metamodel.claude_cli.trace_events import unmark_subagent_sessions
+
+    state = _load_state(session_id)
+    events = _load_events(session_id)
+
+    if state["events_processed"] < len(events):
+        logger.debug(f"SessionEnd: {len(events) - state['events_processed']} unprocessed events found — replaying before cleanup")
+        replay_session(session_id)
+
+    subagent_ids = [
+        e.get("agent_id") for e in events
+        if e.get("hook_event_name") == "SubagentStart" and e.get("agent_id")
+    ]
+    unmark_subagent_sessions(subagent_ids)
+
+    _session_log(session_id).unlink(missing_ok=True)
+    _state_file(session_id).unlink(missing_ok=True)
+    logger.debug(f"SessionEnd: cleaned up session files for {session_id}")
 
 
 def replay_session(session_id: str) -> None:
@@ -402,7 +410,7 @@ def replay_session(session_id: str) -> None:
         except Exception:
             pass
 
-    _log(f"--- Replay: {len(new_events)} new events for session {session_id} ---")
+    logger.debug(f"--- Replay: {len(new_events)} new events for session {session_id} ---")
     handler = ReplayHandler()
     _process_turn(new_events, session_id, model, handler, transcript_start_line=transcript_start_line)
 
@@ -410,12 +418,12 @@ def replay_session(session_id: str) -> None:
     state["transcript_lines_processed"] = transcript_line_count or transcript_start_line
     state["model"] = model
     _save_state(session_id, state)
-    _log("--- Replay done ---")
+    logger.debug("--- Replay done ---")
 
 
 def main() -> None:
     if len(sys.argv) != 2:
-        _log("Usage: replay.py <session_id>")
+        logger.debug("Usage: replay.py <session_id>")
         sys.exit(1)
     replay_session(sys.argv[1])
 

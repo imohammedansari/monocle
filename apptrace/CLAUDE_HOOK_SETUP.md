@@ -4,216 +4,126 @@ This guide explains how to set up Monocle tracing for Claude Code CLI sessions.
 
 ## Overview
 
-The Claude Code hook automatically captures trace events from your Claude Code sessions and exports them to your configured observability backend (Okahu, console, file, etc.).
+Monocle instruments Claude Code by registering hooks for all session events. Each hook fires `python -m monocle_apptrace claude-hook`, which records the event and replays it as OpenTelemetry spans at the end of each turn.
 
-## Installation
+## Setup (3 steps)
 
 ### 1. Install the Monocle Package
 
 ```bash
-cd monocle/apptrace
-pip install -e .
+pip install monocle_apptrace
 ```
 
-### 2. Configure Claude Code Settings
+Or from source:
+```bash
+cd monocle/apptrace && pip install -e .
+```
 
-Copy the provided settings template to Claude's global configuration directory:
+### 2. Set Environment Variables
+
+Add these to your `~/.zshrc` or `~/.bashrc` and reload:
 
 ```bash
-cp claude_hook_settings.json ~/.claude/settings.json
-```
-
-**What's in `claude_hook_settings.json`:**
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "hooks": [{
-        "type": "command",
-        "command": "python3 -m monocle_apptrace claude-hook"
-      }]
-    }]
-  }
-}
-```
-
-This tells Claude Code to run `python3 -m monocle_apptrace claude-hook` whenever a session ends (Stop event).
-
-### 3. Set Environment Variables
-
-Add these to your `~/.zshrc` or `~/.bashrc`:
-
-```bash
-# Monocle Claude Hook Configuration
-export MONOCLE_EXPORTER="okahu,file"              # Where to send traces
-export OKAHU_API_KEY="your-api-key"               # Your Okahu API key
+export OKAHU_API_KEY="your-api-key"
 export OKAHU_INGESTION_ENDPOINT="https://ingest.okahu.co/api/v1/trace/ingest"
-export MONOCLE_SERVICE_NAME="claude-cli"          # Service name in traces
-export DEFAULT_WORKFLOW_NAME="claude-cli"         # Workflow name
-export MONOCLE_CLAUDE_DEBUG=true                  # Optional: debug logging
+export MONOCLE_EXPORTER="okahu,file"        # okahu | file | console (combinable)
+export MONOCLE_WORKFLOW_NAME="claude-cli"   # labels your traces
+export MONOCLE_CLAUDE_DEBUG=1               # optional: verbose hook logging
 ```
-
-**Available Exporters:**
-- `okahu` - Send to Okahu observability platform
-- `file` - Write to local JSON files
-- `console` - Print to terminal (good for testing)
-- Combine multiple: `"okahu,file,console"`
-
-### 4. Reload Your Shell
 
 ```bash
-source ~/.zshrc  # or ~/.bashrc
+source ~/.zshrc
 ```
 
-## Testing
-
-### Test with Mock Event
+### 3. Register the Hooks
 
 ```bash
-cd monocle/apptrace
-./test_claude_hook.sh
+python -m monocle_apptrace claude-install
 ```
 
-### Test with Real Claude Code
+This writes all 11 hooks into `~/.claude/settings.json` non-destructively — existing hooks from other tools are preserved. Re-running is safe (idempotent).
 
-1. Start Claude Code in any directory
-2. Have a conversation
-3. Exit or complete the session
-4. Check traces:
+**That's it.** Start a new Claude Code session and traces flow automatically.
 
-**Session logs:**
-```bash
-ls -la .monocle/.claude_sessions/
-cat .monocle/.claude_sessions/.monocle_claude_*.jsonl
-```
-
-**File exports (if using file exporter):**
-Check your configured output directory for trace files.
-
-**Okahu (if using okahu exporter):**
-View traces in your Okahu dashboard.
+---
 
 ## How It Works
 
 ```
-┌─────────────────────┐
-│ Claude Code CLI     │
-│ Session Ends        │
-└──────────┬──────────┘
-           │ Triggers Stop hook
-           ▼
-┌─────────────────────────────────────┐
-│ python3 -m monocle_apptrace         │
-│         claude-hook                 │
-└──────────┬──────────────────────────┘
-           │ Reads event JSON from stdin
-           ▼
-┌─────────────────────────────────────┐
-│ Event Handler                       │
-│ - Records event                     │
-│ - Appends to session log            │
-│ - Triggers replay                   │
-└──────────┬──────────────────────────┘
+Claude Code session event fires (any of 11 hooks)
            │
            ▼
-┌─────────────────────────────────────┐
-│ Replay Session                      │
-│ - Groups events into spans          │
-│ - Emits OpenTelemetry traces        │
-└──────────┬──────────────────────────┘
+python -m monocle_apptrace claude-hook   (reads event JSON from stdin)
            │
            ▼
-┌─────────────────────────────────────┐
-│ Exporters                           │
-│ - Okahu                             │
-│ - File                              │
-│ - Console                           │
-└─────────────────────────────────────┘
+Event Handler — records event to per-session JSONL log
+           │
+           │  (on Stop event only)
+           ▼
+Replay Session — reconstructs turn from all events, emits OTel spans
+           │
+           ▼
+Exporters — Okahu / file / console
 ```
+
+**Hooks registered** (all 11 Claude Code hook events):
+`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+`SubagentStart`, `SubagentStop`, `Stop`, `StopFailure`,
+`PreCompact`, `PostCompact`, `SessionEnd`
+
+---
+
+## Testing
+
+### Verify with a mock event
+
+```bash
+echo '{"session_id":"test","hook_event_name":"Stop","last_assistant_message":"hello"}' \
+  | python -m monocle_apptrace claude-hook
+```
+
+### Run the integration test script
+
+```bash
+cd monocle/apptrace && ./test_claude_hook.sh
+```
+
+### Watch live during a real session
+
+```bash
+export MONOCLE_CLAUDE_DEBUG=1
+claude   # start from this shell so the env var is inherited
+```
+Hook output (including span creation) appears in Claude Code's status bar.
+
+---
 
 ## Troubleshooting
 
-### Hook doesn't run
-
-**Check settings file:**
+**Hooks not running:**
 ```bash
-cat ~/.claude/settings.json
+cat ~/.claude/settings.json   # verify hooks are registered
+python -m monocle_apptrace claude-install   # re-run if missing
 ```
 
-**Test command manually:**
+**No traces:**
 ```bash
-echo '{"session_id":"test","hook_event_name":"Stop"}' | python3 -m monocle_apptrace claude-hook
+env | grep -E "MONOCLE|OKAHU"   # verify env vars are set
+export MONOCLE_EXPORTER=console && claude   # watch traces in terminal
 ```
 
-### No traces appearing
-
-**Verify environment variables:**
+**Import errors:**
 ```bash
-env | grep MONOCLE
-env | grep OKAHU
+python -c "import monocle_apptrace; print(monocle_apptrace.__file__)"
+pip install -e monocle/apptrace --force-reinstall
 ```
 
-**Test with console exporter:**
-```bash
-export MONOCLE_EXPORTER="console"
-```
-Start a Claude session and watch terminal output.
+---
 
-### Import errors
+## Files
 
-**Check package installation:**
-```bash
-python3 -c "import monocle_apptrace; print(monocle_apptrace.__file__)"
-```
-
-**Reinstall if needed:**
-```bash
-cd monocle/apptrace
-pip install -e . --force-reinstall
-```
-
-## Files Reference
-
-| File | Purpose | Location |
-|------|---------|----------|
-| `claude_hook_settings.json` | Template for Claude settings | Repo (for distribution) |
-| `~/.claude/settings.json` | Active Claude configuration | User's home directory |
-| `~/.zshrc` or `~/.bashrc` | Environment variables | User's home directory |
-| `.monocle/.claude_sessions/` | Session event logs | Where Claude Code runs |
-
-## Advanced Configuration
-
-### Custom Exporters
-
-Create your own exporter and configure:
-```bash
-export MONOCLE_EXPORTER="custom_module.CustomExporter"
-```
-
-### Multiple Projects
-
-Use different environment variables per project with `.env` files:
-```bash
-# In project directory
-cat > .env << EOF
-export MONOCLE_SERVICE_NAME="my-project"
-export DEFAULT_WORKFLOW_NAME="my-workflow"
-EOF
-
-# Source before running Claude Code
-source .env
-```
-
-### Different Python Version
-
-If you have multiple Python versions:
-```bash
-# In ~/.claude/settings.json, use specific python
-"command": "python3.11 -m monocle_apptrace claude-hook"
-```
-
-## Support
-
-- **Documentation**: See [Monocle User Guide](Monocle_User_Guide.md)
-- **Issues**: Report at the Monocle repository
-- **Implementation Guide**: See [PRASAD_IMPLEMENTATION_GUIDE.md](../PRASAD_IMPLEMENTATION_GUIDE.md)
+| Path | Purpose |
+|---|---|
+| `~/.claude/settings.json` | Claude Code config — hooks registered here by `claude-install` |
+| `.monocle/.claude_sessions/` | Per-session event logs (auto-cleaned on SessionEnd) |
+| `.monocle_claude_trace.jsonl` | Global raw event audit log |

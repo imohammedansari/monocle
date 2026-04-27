@@ -1,10 +1,10 @@
 from monocle_apptrace.instrumentation.common.wrapper import task_wrapper
 from monocle_apptrace.instrumentation.metamodel.claude_cli.entities.agent import (
+    INFERENCE,
     INVOCATION,
     REQUEST,
     SUBAGENT_INVOCATION,
 )
-from monocle_apptrace.instrumentation.metamodel.claude_cli.entities.inference import INFERENCE
 from monocle_apptrace.instrumentation.metamodel.claude_cli.entities.tool import MCP_TOOL, TOOL
 
 _PKG = "monocle_apptrace.instrumentation.metamodel.claude_cli.replay_handlers"

@@ -13,8 +13,8 @@ TOOL = {
         ],
         # Second entity: the agent that invoked this tool (mirrors ADK tool entity pattern)
         [
-            {"attribute": "name", "accessor": lambda arguments: _helper.get_agent_name(arguments)},
-            {"attribute": "type", "accessor": lambda arguments: _helper.get_agent_type(arguments)},
+            {"attribute": "name", "accessor": lambda arguments: "Claude Code"},
+            {"attribute": "type", "accessor": lambda arguments: "agent.claude_cli"},
         ],
     ],
     "events": [
@@ -52,8 +52,8 @@ MCP_TOOL = {
             {"attribute": "description", "accessor": lambda arguments: _helper.get_tool_description(arguments)},
         ],
         [
-            {"attribute": "name", "accessor": lambda arguments: _helper.get_agent_name(arguments)},
-            {"attribute": "type", "accessor": lambda arguments: _helper.get_agent_type(arguments)},
+            {"attribute": "name", "accessor": lambda arguments: "Claude Code"},
+            {"attribute": "type", "accessor": lambda arguments: "agent.claude_cli"},
         ],
     ],
     "events": [
