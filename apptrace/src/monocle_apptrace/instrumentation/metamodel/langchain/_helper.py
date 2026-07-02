@@ -22,9 +22,24 @@ from contextlib import suppress
 logger = logging.getLogger(__name__)
 
 
-def extract_messages(args):
+def extract_messages(args, instance=None):
     """Extract system and user messages"""
     try:
+        # Some callers (e.g. NAT's retry decorator, which monkeypatches the class attribute
+        # and forwards the captured call as a plain function invocation instead of a bound
+        # method call) end up passing the chat model itself as the leading positional arg,
+        # with no instance available via normal descriptor binding either. Detect that shape
+        # by duck-typing (a Runnable chat model exposes invoke/ainvoke) rather than a message.
+        if args and isinstance(args, (list, tuple)) and len(args) > 1:
+            leading = args[0]
+            is_self_like = leading is instance or (
+                not isinstance(leading, (list, tuple))
+                and not hasattr(leading, 'text')
+                and not hasattr(leading, 'messages')
+                and hasattr(leading, 'ainvoke') and hasattr(leading, 'invoke')
+            )
+            if is_self_like:
+                args = args[1:]
         messages = []
         if args and isinstance(args, (list, tuple)) and hasattr(args[0], 'text'):
             return [args[0].text]
