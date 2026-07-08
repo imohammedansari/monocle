@@ -6,7 +6,8 @@ from monocle_apptrace.instrumentation.common.constants import (
 )
 from monocle_apptrace.instrumentation.common.span_handler import SpanHandler
 from monocle_apptrace.instrumentation.metamodel.langgraph._helper import (
-   DELEGATION_NAME_PREFIX, get_name, is_root_agent_name, is_delegation_tool, extract_thread_id, extract_parent_command_message, is_single_agent_instance
+   DELEGATION_NAME_PREFIX, get_name, is_root_agent_name, is_delegation_tool, extract_thread_id, extract_parent_command_message, is_single_agent_instance,
+   set_pending_stream_processor, pop_pending_stream_processor, clear_pending_stream_processor
 )
 from monocle_apptrace.instrumentation.metamodel.langgraph.entities.inference import (
     AGENT_DELEGATION, AGENT_REQUEST, AGENT, AGENT_REQUEST_STREAM, AGENT_STREAM
@@ -47,7 +48,50 @@ class LanggraphAgentHandler(SpanHandler):
         context = set_value(AGENT_NAME_KEY, get_name(instance))
         context = set_value(AGENT_PREFIX_KEY, DELEGATION_NAME_PREFIX, context)
         scope_name = AGENT_REQUEST.get("type")
-        is_streaming_call = to_wrap.get("method") in ["astream", "stream"]
+        method = to_wrap.get("method")
+        is_streaming_call = method in ["astream", "stream"]
+
+        # --- "One agentic span per graph run" dedup -----------------------------------
+        # LangChain's astream_events(v2) always drives the public astream on the SAME
+        # instance, so instrumenting both would emit a redundant nested pair of agentic
+        # spans per graph run. Make astream_events skip its own span but stash the chosen
+        # (turn-vs-invocation) processor; the inner astream/stream adopts it below and
+        # becomes the single, correctly-typed agentic span. The turn/session scope still
+        # gets established (session here; turn by the surviving inner astream), so nested
+        # sub-agent graph runs continue to see the turn and type as invocations.
+        if method == "astream_events":
+            events_wrapper = to_wrap.copy()
+            events_wrapper["skip_span"] = True
+            if not is_scope_set(scope_name):
+                # Top-level graph run -> the surviving inner astream is the turn.
+                if is_single_agent_instance(instance):
+                    set_pending_stream_processor(
+                        instance, {"output_processor_list": [AGENT_REQUEST_STREAM, AGENT_STREAM]})
+                else:
+                    set_pending_stream_processor(
+                        instance, {"output_processor": AGENT_REQUEST_STREAM})
+                session_id = extract_thread_id(args, kwargs)
+                if session_id is not None:
+                    return start_scope(AGENT_SESSION, scope_value=session_id, context=context), events_wrapper
+                return attach(context), events_wrapper
+            # Nested graph run inside a turn -> the surviving inner astream is an invocation.
+            set_pending_stream_processor(instance, {"output_processor": AGENT_STREAM})
+            return attach(context), events_wrapper
+
+        # --- Inner astream/stream driven by astream_events: adopt the stashed processor ---
+        if is_streaming_call:
+            pending = pop_pending_stream_processor(instance)
+            if pending is not None:
+                adopted_wrapper = to_wrap.copy()
+                # Replace the registry default with the processor chosen by astream_events.
+                adopted_wrapper.pop("output_processor", None)
+                adopted_wrapper.pop("output_processor_list", None)
+                adopted_wrapper.update(pending)
+                # Session scope was already established by the driving astream_events;
+                # do not re-establish it here.
+                return attach(context), adopted_wrapper
+
+        # --- Original behavior: direct invoke/ainvoke/astream/stream calls -------------
         if not is_scope_set(scope_name):
             agent_request_wrapper = to_wrap.copy()
             if is_single_agent_instance(instance):
@@ -63,6 +107,15 @@ class LanggraphAgentHandler(SpanHandler):
             return attach(context), agent_request_wrapper
         else:
             return attach(context), None
+
+    def post_tracing(self, to_wrap, wrapped, instance, args, kwargs, return_value, token=None):
+        # Defensive: if astream_events did NOT drive an inner astream (the documented
+        # fallback case), its stashed marker would leak and could be wrongly adopted by a
+        # later direct astream on the same instance. Clear it once the astream_events call
+        # completes (a no-op when the inner astream already consumed it).
+        if to_wrap.get("method") == "astream_events":
+            clear_pending_stream_processor(instance)
+        super().post_tracing(to_wrap, wrapped, instance, args, kwargs, return_value, token=token)
 
     def post_task_processing(self, to_wrap, wrapped, instance, args, kwargs, result, ex, span, parent_span):
         """Apply ParentCommand filtering to the span before task execution."""

@@ -702,8 +702,16 @@ def verify_tool_names_in_spans(span: Span, parent_span: Span) -> bool:
 
     tool_name_from_agentic_span = span.attributes.get("entity.1.name", None)
     tool_name_from_inference_span = parent_span.attributes.get(LAST_INFERENCE, None)
-    if tool_name_from_agentic_span is not None and tool_name_from_inference_span is not None:
-        tool_name_from_inference_span = tool_name_from_inference_span.split(":")[1]
+    # LAST_INFERENCE is reset to "" after being consumed; the key stays present, so
+    # .get(LAST_INFERENCE, None) can return "" (not None). Treat empty / colon-less
+    # values as "no pending inference" instead of indexing into a non-existent split
+    # (which raised IndexError: list index out of range).
+    if (
+        tool_name_from_agentic_span
+        and tool_name_from_inference_span
+        and ":" in tool_name_from_inference_span
+    ):
+        tool_name_from_inference_span = tool_name_from_inference_span.split(":", 1)[1]
         if span.attributes.get("span.type") == SPAN_TYPES.AGENTIC_INVOCATION and tool_name_from_inference_span == ANY_AGENT:
             return True
         # In case of agentic delegation, tool names may be prefixed with agent name, so we check for containment

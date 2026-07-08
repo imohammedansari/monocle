@@ -9,6 +9,36 @@ DELEGATION_NAME_PREFIX = 'transfer_to_'
 ROOT_AGENT_NAME = 'LangGraph'
 LANGGRAPTH_AGENT_NAME_KEY = "agent.langgraph"
 
+# --- "One agentic span per graph run" dedup marker ----------------------------------
+# LangChain's Runnable.astream_events(version="v2") always drives the public astream on
+# the SAME CompiledStateGraph instance. Because both astream_events and astream are
+# instrumented, a single graph run otherwise emits a redundant nested pair of
+# agentic.invocation spans. To collapse the pair we make astream_events skip its own
+# span but stash the chosen (turn-vs-invocation) output-processor here, keyed by
+# id(instance); the inner astream/stream then adopts that processor and becomes the
+# single, correctly-typed agentic span. Keys are partitioned by instance identity, so
+# parallel sub-agent graph runs (distinct instances) never collide.
+_PENDING_STREAM_PROCESSOR: dict = {}
+
+def set_pending_stream_processor(instance, processor_spec: dict) -> None:
+    """Stash the output-processor an inner astream/stream should adopt for this instance."""
+    try:
+        _PENDING_STREAM_PROCESSOR[id(instance)] = processor_spec
+    except Exception as e:
+        logger.debug("Warning: Error occurred in set_pending_stream_processor: %s", str(e))
+
+def pop_pending_stream_processor(instance) -> dict:
+    """Consume (and remove) the pending output-processor for this instance, if any."""
+    try:
+        return _PENDING_STREAM_PROCESSOR.pop(id(instance), None)
+    except Exception as e:
+        logger.debug("Warning: Error occurred in pop_pending_stream_processor: %s", str(e))
+        return None
+
+def clear_pending_stream_processor(instance) -> None:
+    """Drop any leftover marker for this instance (fallback: astream_events did not drive astream)."""
+    _PENDING_STREAM_PROCESSOR.pop(id(instance), None)
+
 def _as_state_dict(state):
     """Shallowly normalize a dataclass/Pydantic StateGraph state to a dict for channel introspection."""
     if isinstance(state, dict):
