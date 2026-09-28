@@ -32,6 +32,10 @@ class ScenarioResult(BaseModel):
     failure_reason: Optional[str] = Field(
         None, description='"max turns exhausted" or "target error: ...".')
     turns: list[TurnRecord] = Field(default_factory=list)
+    missing_required_params: list[str] = Field(
+        default_factory=list,
+        description="Required params the target agent never asked for. Non-empty fails "
+                    "the scenario even when the judge is satisfied.")
     spans: tuple = Field((), description="Target spans across every turn.")
     per_turn_spans: list[tuple] = Field(default_factory=list,
                                         description="Target spans, one tuple per turn.")
@@ -43,6 +47,9 @@ class ScenarioResult(BaseModel):
                  f"{self.turns_used}/{self.max_turns} turns"]
         if self.failure_reason:
             lines.append(f"  reason: {self.failure_reason}")
+        if self.missing_required_params:
+            lines.append("  never requested: "
+                         + ", ".join(self.missing_required_params))
         if self.turns and self.turns[-1].verdict is not None:
             lines.append(f"  last verdict: {self.turns[-1].verdict.reason}")
         for record in self.turns:

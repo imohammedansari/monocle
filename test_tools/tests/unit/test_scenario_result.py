@@ -73,3 +73,34 @@ def test_report_of_a_result_with_no_turns_is_still_readable():
     result = ScenarioResult(test_name="flight", scenario="Book a flight.", passed=False,
                             turns_used=0, max_turns=8, failure_reason="target error: boom")
     assert "FAILED" in result.report()
+
+
+# --- missing required params ----------------------------------------------
+
+def test_report_names_required_params_that_were_never_requested():
+    result = ScenarioResult(
+        test_name="flight", scenario="Book a flight.", passed=False,
+        turns_used=1, max_turns=8,
+        failure_reason="required params never requested: date",
+        missing_required_params=["date"],
+        turns=[TurnRecord(turn=1, tester_message="hi", target_response="booked",
+                          verdict=Verdict(met=True, reason="confirmed"))])
+    lines = result.report().splitlines()
+    # A dedicated line, not just the substring the failure_reason line already carries.
+    assert "  never requested: date" in lines
+    assert lines[0].startswith("FAILED")
+
+
+def test_report_omits_the_line_when_nothing_is_missing():
+    result = ScenarioResult(test_name="flight", scenario="Book a flight.", passed=True,
+                            turns_used=1, max_turns=8,
+                            turns=[TurnRecord(turn=1, tester_message="hi",
+                                              target_response="booked",
+                                              verdict=Verdict(met=True, reason="done"))])
+    assert "never requested" not in result.report()
+
+
+def test_missing_required_params_defaults_to_empty():
+    result = ScenarioResult(test_name="flight", scenario="Book a flight.", passed=True,
+                            turns_used=1, max_turns=8)
+    assert result.missing_required_params == []

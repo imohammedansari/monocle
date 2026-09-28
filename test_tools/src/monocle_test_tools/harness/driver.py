@@ -137,11 +137,16 @@ class ScenarioHarness:
                     passed = True
                     break
 
+                # Only the conversation itself goes into the tester's history. Judge
+                # verdicts deliberately do NOT: injecting them -- as a HumanMessage, a
+                # SystemMessage, or folded into the target turn -- makes the tester lose
+                # track of who is who (the Human in its history IS the target agent) and
+                # it stops calling its param tools, inventing values instead. The tester
+                # self-checks through its own evaluate_response tool; the authoritative
+                # verdict stays in the driver and the result.
                 messages += [
                     AIMessage(content=tester_message),
                     HumanMessage(content=str(target_response)),
-                    HumanMessage(content="[evaluator] success criteria not met: "
-                                         f"{verdict.reason}"),
                 ]
             else:
                 failure_reason = "max turns exhausted"
@@ -150,6 +155,17 @@ class ScenarioHarness:
                 await get_agent_runner(agent_type).end_session(case.session_id)
             except Exception as error:  # pylint: disable=broad-except
                 logger.debug("end_session cleanup failed: %s", error)
+
+        # A required detail the target agent never asked for fails the scenario even
+        # when the judge is satisfied -- that combination is exactly an agent meeting
+        # the success criteria by inventing a detail instead of asking for it. When the
+        # run already failed, the original cause leads and this is appended.
+        requested = {name for record in records for name in record.param_tools_called}
+        missing = case.missing_required_params(requested)
+        if missing:
+            passed = False
+            clause = f"required params never requested: {', '.join(missing)}"
+            failure_reason = f"{failure_reason}; {clause}" if failure_reason else clause
 
         # Re-point the validator's pool at every target span this scenario produced, so
         # the monocle_trace_asserter fixture asserts over the whole run rather than the
@@ -161,6 +177,7 @@ class ScenarioHarness:
             test_name=case.test_name, scenario=case.scenario, passed=passed,
             turns_used=len(records), max_turns=case.max_turns,
             failure_reason=failure_reason, turns=records,
+            missing_required_params=missing,
             spans=all_spans, per_turn_spans=per_turn_spans)
 
     async def test_scenario_async(self, target_agent: Any, agent_type: str,

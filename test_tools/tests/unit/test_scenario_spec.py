@@ -84,3 +84,52 @@ def test_empty_success_criteria_rejected():
 def test_max_turns_below_one_rejected():
     with pytest.raises(ValidationError, match="max_turns"):
         ScenarioTestCase.model_validate({**VALID, "max_turns": 0})
+
+
+# --- required params -------------------------------------------------------
+
+def test_required_defaults_to_true():
+    case = ScenarioTestCase.model_validate(VALID)
+    assert all(p.required for p in case.params)
+
+
+def test_required_can_be_turned_off():
+    param = ScenarioParam(name="seat", value="aisle", description="seat preference",
+                          required=False)
+    assert param.required is False
+
+
+def test_missing_required_params_reports_unrequested_on_request_params():
+    case = ScenarioTestCase.model_validate(VALID)
+    assert case.missing_required_params(set()) == ["destination", "date"]
+
+
+def test_missing_required_params_exempts_initial_params():
+    """An initial param is satisfied by construction -- it went out up front."""
+    case = ScenarioTestCase.model_validate(VALID)
+    assert "source" not in case.missing_required_params(set())
+
+
+def test_missing_required_params_is_empty_when_all_were_requested():
+    case = ScenarioTestCase.model_validate(VALID)
+    assert case.missing_required_params({"destination", "date"}) == []
+
+
+def test_missing_required_params_ignores_optional_params():
+    optional = {**VALID, "params": [
+        {"name": "source", "value": "SFO", "is_initial": True, "description": "a"},
+        {"name": "seat", "value": "aisle", "is_initial": False, "description": "b",
+         "required": False},
+    ]}
+    case = ScenarioTestCase.model_validate(optional)
+    assert case.missing_required_params(set()) == []
+
+
+def test_missing_required_params_preserves_declaration_order():
+    case = ScenarioTestCase.model_validate(VALID)
+    assert case.missing_required_params({"date"}) == ["destination"]
+
+
+def test_missing_required_params_with_no_params_at_all():
+    case = ScenarioTestCase.model_validate({**VALID, "params": []})
+    assert case.missing_required_params(set()) == []
