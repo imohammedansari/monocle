@@ -4,6 +4,7 @@ import uuid
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic_core.core_schema import ValidationInfo
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -50,12 +51,15 @@ class ScenarioTestCase(BaseModel):
     max_turns: int = Field(10, description="Maximum target-agent invocations.")
     session_id: Optional[str] = Field(None, description="Auto-generated when omitted.")
 
+    @field_validator("scenario", "success_criteria")
+    @classmethod
+    def _not_blank(cls, value: str, info: ValidationInfo) -> str:
+        if not value.strip():
+            raise ValueError(f"{info.field_name} must not be empty")
+        return value
+
     @model_validator(mode="after")
     def _validate_case(self) -> "ScenarioTestCase":
-        if not self.scenario.strip():
-            raise ValueError("scenario must not be empty")
-        if not self.success_criteria.strip():
-            raise ValueError("success_criteria must not be empty")
         if self.max_turns < 1:
             raise ValueError("max_turns must be at least 1")
         names = [param.name for param in self.params]
