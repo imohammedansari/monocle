@@ -13,6 +13,7 @@ from opentelemetry.trace.status import StatusCode
 from monocle_apptrace.instrumentation.common.constants import (
     ADD_NEW_WORKFLOW,
     AGENTIC_SPANS,
+    MONOCLE_SUPPRESS_SPANS,
     SPAN_START_TIME,
     SPAN_END_TIME,
 )
@@ -338,7 +339,9 @@ def monocle_wrapper(tracer: Tracer, handler: SpanHandler, to_wrap, wrapped, inst
                 to_wrap = alternate_to_wrapp
         except Exception as e:
             logger.info(f"Warning: Error occurred in pre_tracing: {e}")
-        if to_wrap.get('skip_span', False) or handler.skip_span(to_wrap, wrapped, instance, args, kwargs):
+        if (get_value(MONOCLE_SUPPRESS_SPANS) is True
+                or to_wrap.get('skip_span', False)
+                or handler.skip_span(to_wrap, wrapped, instance, args, kwargs)):
             return_value = wrapped(*args, **kwargs)
         else:
             add_workflow_span = get_value(ADD_NEW_WORKFLOW) == True
@@ -370,7 +373,9 @@ def monocle_iter_wrapper(tracer: Tracer, handler: SpanHandler, to_wrap, wrapped,
                 to_wrap = alternate_to_wrapp
         except Exception as e:
             logger.info(f"Warning: Error occurred in pre_tracing: {e}")
-        if to_wrap.get('skip_span', False) or handler.skip_span(to_wrap, wrapped, instance, args, kwargs):
+        if (get_value(MONOCLE_SUPPRESS_SPANS) is True
+                or to_wrap.get('skip_span', False)
+                or handler.skip_span(to_wrap, wrapped, instance, args, kwargs)):
             for item in wrapped(*args, **kwargs):
                 yield item
         else:
@@ -576,7 +581,9 @@ async def amonocle_wrapper(tracer: Tracer, handler: SpanHandler, to_wrap, wrappe
                 to_wrap = alternate_to_wrapp
         except Exception as e:
             logger.info(f"Warning: Error occurred in pre_tracing: {e}")
-        if to_wrap.get('skip_span', False) or handler.skip_span(to_wrap, wrapped, instance, args, kwargs):
+        if (get_value(MONOCLE_SUPPRESS_SPANS) is True
+                or to_wrap.get('skip_span', False)
+                or handler.skip_span(to_wrap, wrapped, instance, args, kwargs)):
             return_value = await wrapped(*args, **kwargs)
         else:
             add_workflow_span = get_value(ADD_NEW_WORKFLOW) == True
@@ -608,7 +615,9 @@ async def amonocle_iter_wrapper(tracer: Tracer, handler: SpanHandler, to_wrap, w
                 to_wrap = alternate_to_wrapp
         except Exception as e:
             logger.info(f"Warning: Error occurred in pre_tracing: {e}")
-        if to_wrap.get('skip_span', False) or handler.skip_span(to_wrap, wrapped, instance, args, kwargs):
+        if (get_value(MONOCLE_SUPPRESS_SPANS) is True
+                or to_wrap.get('skip_span', False)
+                or handler.skip_span(to_wrap, wrapped, instance, args, kwargs)):
             async for item in wrapped(*args, **kwargs):
                 yield item
         else:
