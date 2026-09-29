@@ -89,7 +89,7 @@ class ScenarioHarness:
     async def run_scenario_async(self, target_agent: Any, agent_type: str,
                                  target_description: str) -> ScenarioResult:
         """Run the scenario. Never raises on a behavioral failure."""
-        from langchain_core.messages import AIMessage, HumanMessage
+        from langchain_core.messages import HumanMessage
 
         case = self.case
         model = self._resolve_model(self._model_spec, TEST_AGENT_MODEL_ENV)
@@ -137,17 +137,21 @@ class ScenarioHarness:
                     passed = True
                     break
 
-                # Only the conversation itself goes into the tester's history. Judge
-                # verdicts deliberately do NOT: injecting them -- as a HumanMessage, a
-                # SystemMessage, or folded into the target turn -- makes the tester lose
-                # track of who is who (the Human in its history IS the target agent) and
-                # it stops calling its param tools, inventing values instead. The tester
-                # self-checks through its own evaluate_response tool; the authoritative
-                # verdict stays in the driver and the result.
-                messages += [
-                    AIMessage(content=tester_message),
-                    HumanMessage(content=str(target_response)),
-                ]
+                # Carry the tester's OWN output forward verbatim -- tool calls and
+                # tool results included -- rather than replaying just its final text.
+                # Replaying only the text leaves a history in which the tester appears
+                # to produce param values out of nowhere, and it imitates that: it
+                # invents the next value instead of calling the tool. Measured at the
+                # turn where the target asks for the date, carrying full history called
+                # the tool 10/10 versus 4/10 for text-only.
+                #
+                # Judge verdicts still do NOT go in. Injecting them -- as a
+                # HumanMessage, a SystemMessage, or folded into the target turn -- makes
+                # the tester lose track of who is who (the Human in its history IS the
+                # target agent). The tester self-checks through its own
+                # evaluate_response tool; the authoritative verdict stays in the driver.
+                messages = list(state["messages"])
+                messages.append(HumanMessage(content=str(target_response)))
             else:
                 failure_reason = "max turns exhausted"
         finally:
