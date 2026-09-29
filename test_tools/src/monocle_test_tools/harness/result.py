@@ -21,7 +21,15 @@ class TurnRecord(BaseModel):
 
 
 class ScenarioResult(BaseModel):
-    """The outcome of one scenario run."""
+    """The outcome of one scenario run.
+
+    ``turns``, ``spans`` and ``per_turn_spans`` are excluded from ``repr`` on purpose.
+    A failing ``assert result.passed`` makes pytest print ``repr(result)``, and the
+    default Pydantic repr dumps every span object and every message -- hundreds of lines
+    of ``<ReadableSpan object at 0x...>`` burying the actual failure. The transcript
+    belongs in :meth:`report`, which is what callers pass as the assert message; the
+    fields are still fully readable as attributes.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -32,13 +40,14 @@ class ScenarioResult(BaseModel):
     max_turns: int
     failure_reason: Optional[str] = Field(
         None, description='"max turns exhausted" or "target error: ...".')
-    turns: list[TurnRecord] = Field(default_factory=list)
+    turns: list[TurnRecord] = Field(default_factory=list, repr=False)
     missing_required_params: list[str] = Field(
         default_factory=list,
         description="Required params the target agent never asked for. Non-empty fails "
                     "the scenario even when the judge is satisfied.")
-    spans: tuple = Field((), description="Target spans across every turn.")
-    per_turn_spans: list[tuple] = Field(default_factory=list,
+    spans: tuple = Field((), repr=False,
+                         description="Target spans across every turn.")
+    per_turn_spans: list[tuple] = Field(default_factory=list, repr=False,
                                         description="Target spans, one tuple per turn.")
 
     def report(self) -> str:

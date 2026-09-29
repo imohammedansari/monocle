@@ -140,3 +140,53 @@ def test_missing_required_params_defaults_to_empty():
     result = ScenarioResult(test_name="flight", scenario="Book a flight.", passed=True,
                             turns_used=1, max_turns=8)
     assert result.missing_required_params == []
+
+
+# --- repr stays readable in pytest output ----------------------------------
+
+class _FakeSpan:
+    """Stands in for a ReadableSpan, whose repr is what floods the terminal."""
+
+    def __repr__(self):
+        return "<SPAN-REPR-MARKER>"
+
+
+def _result_with_bulky_fields():
+    spans = tuple(_FakeSpan() for _ in range(40))
+    return ScenarioResult(
+        test_name="book_flight_foul_mouthed_user",
+        scenario="Book a flight from source to destination.",
+        passed=False, turns_used=5, max_turns=8,
+        failure_reason="required params never requested: date",
+        missing_required_params=["date"],
+        turns=[TurnRecord(turn=1,
+                          tester_message="I need a damn flight out of San Francisco.",
+                          target_response="Where would you like to fly to?",
+                          verdict=Verdict(met=False, reason="not booked"))],
+        spans=spans, per_turn_spans=[spans])
+
+
+def test_repr_does_not_dump_spans():
+    """pytest prints repr(result) on `assert result.passed` -- spans must stay out."""
+    assert "SPAN-REPR-MARKER" not in repr(_result_with_bulky_fields())
+
+
+def test_repr_does_not_dump_the_turn_transcript():
+    """The transcript belongs in report(), which is the assert message."""
+    assert "tester_message" not in repr(_result_with_bulky_fields())
+
+
+def test_repr_keeps_the_fields_that_identify_the_failure():
+    text = repr(_result_with_bulky_fields())
+    assert "passed=False" in text
+    assert "required params never requested: date" in text
+    assert "book_flight_foul_mouthed_user" in text
+
+
+def test_repr_is_short_enough_to_read_in_a_terminal():
+    assert len(repr(_result_with_bulky_fields())) < 400
+
+
+def test_report_still_shows_the_full_transcript():
+    """Hiding fields from repr must not touch report()."""
+    assert "I need a damn flight" in _result_with_bulky_fields().report()

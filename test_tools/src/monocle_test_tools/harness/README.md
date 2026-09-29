@@ -246,6 +246,11 @@ negative tests, where a failure is the expected outcome).
 | `per_turn_spans` | Target spans, one tuple per turn. |
 | `report()` | The whole run as a readable transcript — use it as your assert message. |
 
+`turns`, `spans` and `per_turn_spans` are excluded from the model's `repr`. A failing
+`assert result.passed` makes pytest print `repr(result)`, and dumping every span object
+and message there would bury the failure under hundreds of lines. They remain fully
+available as attributes — the transcript is what `report()` is for.
+
 At the end of a run the harness points the validator's span pool at every target span the
 scenario produced, so the `monocle_trace_asserter` fixture asserts across the whole
 conversation rather than just the last turn.
