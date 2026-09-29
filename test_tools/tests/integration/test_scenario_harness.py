@@ -61,8 +61,13 @@ async def test_withheld_params_are_only_revealed_on_request(monocle_trace_assert
         build_travel_agent(), AgentTypes.LANGGRAPH, TARGET_DESCRIPTION)
 
     assert result.passed, result.report()
+    opening = result.turns[0].tester_message
+    assert "San Francisco" in opening, (
+        "the opening message must carry the initial param to the target agent:\n"
+        + result.report())
     assert result.turns[0].param_tools_called == [], (
         "the opening message must not require a withheld param:\n" + result.report())
-    revealed = [name for turn in result.turns for name in turn.param_tools_called]
+    revealed = [call.name for turn in result.turns
+                for call in turn.param_tools_called]
     assert "destination" in revealed, (
         "the destination should have been fetched via its tool:\n" + result.report())
