@@ -4,6 +4,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from monocle_test_tools.harness.evaluator import Verdict
+from monocle_test_tools.harness.param_tools import ParamCall
 
 
 class TurnRecord(BaseModel):
@@ -14,9 +15,9 @@ class TurnRecord(BaseModel):
     target_response: Any = Field(None, description="The target agent's reply.")
     verdict: Optional[Verdict] = Field(
         None, description="Driver's verdict; None when the turn ended in an error.")
-    param_tools_called: list[str] = Field(
+    param_tools_called: list[ParamCall] = Field(
         default_factory=list,
-        description="Params the test agent had to ask for on this turn.")
+        description="Param tools the test agent called this turn, with their values.")
 
 
 class ScenarioResult(BaseModel):
@@ -53,13 +54,18 @@ class ScenarioResult(BaseModel):
         if self.turns and self.turns[-1].verdict is not None:
             lines.append(f"  last verdict: {self.turns[-1].verdict.reason}")
         for record in self.turns:
-            called = ""
-            if record.param_tools_called:
-                called = "[called " + ", ".join(
-                    f"{name}()" for name in record.param_tools_called) + "] "
-            lines.append(f"  turn {record.turn}  tester> {called}{record.tester_message}")
-            lines.append(f"          target> {record.target_response}")
+            # The turn number labels the turn's first line, and every following line of
+            # that turn is indented to line up under it. Each tool call gets its own
+            # line showing what it returned, so the tester's message stays verbatim --
+            # what actually went to the target agent, with nothing prepended to it.
+            prefix = f"  turn {record.turn}  "
+            indent = " " * len(prefix)
+            for call in record.param_tools_called:
+                lines.append(f"{prefix}tester> [called {call.name}()] ==> {call.value}")
+                prefix = indent
+            lines.append(f"{prefix}tester> {record.tester_message}")
+            lines.append(f"{indent}target> {record.target_response}")
             if record.verdict is not None:
                 state = "met" if record.verdict.met else "not met"
-                lines.append(f"          verdict> {state} -- {record.verdict.reason}")
+                lines.append(f"{indent}verdict> {state} -- {record.verdict.reason}")
         return "\n".join(lines)

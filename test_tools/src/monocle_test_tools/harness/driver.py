@@ -160,7 +160,8 @@ class ScenarioHarness:
         # when the judge is satisfied -- that combination is exactly an agent meeting
         # the success criteria by inventing a detail instead of asking for it. When the
         # run already failed, the original cause leads and this is appended.
-        requested = {name for record in records for name in record.param_tools_called}
+        requested = {call.name for record in records
+                     for call in record.param_tools_called}
         missing = case.missing_required_params(requested)
         if missing:
             passed = False

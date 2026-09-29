@@ -1,5 +1,6 @@
 """Tests for the scenario result and its failure report. Pure formatting."""
 from monocle_test_tools.harness.evaluator import Verdict
+from monocle_test_tools.harness.param_tools import ParamCall
 from monocle_test_tools.harness.result import ScenarioResult, TurnRecord
 
 
@@ -18,7 +19,8 @@ def _failed_result():
             TurnRecord(turn=2, tester_message="Seattle, obviously.",
                        target_response="What date?",
                        verdict=Verdict(met=False, reason="no booking confirmation"),
-                       param_tools_called=["destination"]),
+                       param_tools_called=[
+                           ParamCall(name="destination", value="Seattle")]),
         ],
     )
 
@@ -45,8 +47,42 @@ def test_report_includes_every_turn():
     assert "Where would you like to fly to?" in report
 
 
-def test_report_marks_which_params_the_tester_had_to_ask_for():
-    assert "[called destination()]" in _failed_result().report()
+def test_report_puts_each_tool_call_on_its_own_line_with_its_value():
+    lines = _failed_result().report().splitlines()
+    assert "  turn 2  tester> [called destination()] ==> Seattle" in lines
+
+
+def test_tool_call_line_precedes_the_tester_message_which_is_unprefixed():
+    lines = _failed_result().report().splitlines()
+    call_line = lines.index("  turn 2  tester> [called destination()] ==> Seattle")
+    assert lines[call_line + 1] == "          tester> Seattle, obviously."
+
+
+def test_turn_number_appears_once_per_turn_on_the_first_line():
+    lines = [line for line in _failed_result().report().splitlines()
+             if "turn 2" in line]
+    assert len(lines) == 1
+
+
+def test_a_turn_with_no_tool_calls_puts_the_number_on_the_message_line():
+    lines = _failed_result().report().splitlines()
+    assert "  turn 1  tester> I need a flight out of San Francisco." in lines
+
+
+def test_every_tool_call_in_a_turn_gets_its_own_line():
+    result = ScenarioResult(
+        test_name="flight", scenario="Book a flight.", passed=True,
+        turns_used=1, max_turns=8,
+        turns=[TurnRecord(
+            turn=1, tester_message="From San Francisco to Seattle.",
+            target_response="Booked.",
+            verdict=Verdict(met=True, reason="done"),
+            param_tools_called=[ParamCall(name="source", value="San Francisco"),
+                                ParamCall(name="destination", value="Seattle")])])
+    lines = result.report().splitlines()
+    assert "  turn 1  tester> [called source()] ==> San Francisco" in lines
+    assert "          tester> [called destination()] ==> Seattle" in lines
+    assert "          tester> From San Francisco to Seattle." in lines
 
 
 def test_report_of_a_passing_result_says_passed():

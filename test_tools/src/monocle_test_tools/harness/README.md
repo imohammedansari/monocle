@@ -148,9 +148,11 @@ call a tool *only* when the target agent asks for that detail:
 ```
 turn 1  tester> I need a damn flight out of San Francisco.
         target> Where would you like to fly to?
-turn 2  tester> [called destination()] Seattle, obviously.
+turn 2  tester> [called destination()] ==> Seattle
+        tester> Seattle, obviously.
         target> What date?
-turn 3  tester> [called date()] 22nd October 2026. Get on with it.
+turn 3  tester> [called date()] ==> 22nd October 2026
+        tester> 22nd October 2026. Get on with it.
 ```
 
 The important part: **the value of a non-initial param never enters the prompt** — only
@@ -238,7 +240,7 @@ negative tests, where a failure is the expected outcome).
 | `passed` | Judge satisfied **and** no required param left unrequested. |
 | `turns_used` / `max_turns` | Turns actually taken, and the budget. |
 | `failure_reason` | `"max turns exhausted"`, `"target error: …"`, and/or the required-param clause. |
-| `turns` | `TurnRecord` per turn: `tester_message`, `target_response`, `verdict`, `param_tools_called`. |
+| `turns` | `TurnRecord` per turn: `tester_message`, `target_response`, `verdict`, `param_tools_called` (a `ParamCall` per tool call, with `name` and the `value` it returned). |
 | `missing_required_params` | Required params the target never asked for. |
 | `spans` | Target spans across the whole scenario. |
 | `per_turn_spans` | Target spans, one tuple per turn. |
@@ -288,9 +290,21 @@ claim a booking without ever calling the tool.
 
 ## Debugging a failure
 
-Start with `result.report()`. It prints every turn, which params the test agent had to
-ask for, and the judge's reasoning per turn — usually enough to see whether the target
-went off task, the criteria were unreachable, or the tester misbehaved.
+Start with `result.report()`. Each tool call gets its own line showing what it returned,
+above the message that actually went to the target:
+
+```
+  turn 3  tester> [called source()] ==> San Francisco
+          tester> [called destination()] ==> Seattle
+          tester> I want to go to Seattle, from San Francisco.
+          target> Which date would you like to travel?
+          verdict> not met -- No booking confirmed.
+```
+
+The tester line is verbatim -- nothing is prepended to it -- so you can see exactly what
+the target received. Between the fetched values, the message, and the judge's reasoning
+per turn, this is usually enough to see whether the target went off task, the criteria
+were unreachable, or the tester misbehaved.
 
 If the tester itself looks wrong, set `MONOCLE_TRACE_TEST_AGENT=true` to stop suppressing
 its spans, and its own inferences will show up in the traces alongside the target's.
