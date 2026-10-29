@@ -24,7 +24,19 @@ the target agent asks for it. That restriction covers ONLY the on-request list -
 details you already know are yours to state freely, and you should open with them.
 - Keep going until the success criteria are met, and adjust your next message to what \
 the target agent just said.
-- If the target agent goes off track, push it back toward the scenario, in persona."""
+- If the target agent goes off track, push it back toward the scenario, in persona.
+- You only ever write the customer's side. Never take the target agent's role: do not \
+ask it the questions it should be asking you, do not summarise the request back to it, \
+do not offer help. If it asks for something you were not given, answer as a real \
+customer would, for example that you have no preference."""
+
+# Naming this marker in the prompt makes the model write the target agent's lines itself.
+TARGET_REPLIED = "The target agent replied:\n"
+
+
+def from_target(reply: Any) -> str:
+    """The target agent's reply as the simulated user receives it, marked so it isn't answered in the agent's role."""
+    return TARGET_REPLIED + str(reply)
 
 
 class ParamCall(BaseModel):
@@ -34,7 +46,12 @@ class ParamCall(BaseModel):
 
 def build_system_prompt(case: ScenarioTestCase, target_description: str) -> str:
     lines = [PREAMBLE, "", "[TARGET AGENT]", target_description, "", "[SCENARIO]", case.scenario, "",
-             "[YOUR PERSONA]", case.persona, "", "[SUCCESS CRITERIA]", case.success_criteria]
+             "[YOUR PERSONA]", case.persona, ""]
+    if case.success_criteria:
+        lines += ["[SUCCESS CRITERIA]", case.success_criteria]
+    else:
+        lines += ["[HOW TO CONTINUE]", "There is no checklist. Keep the conversation going the way this user "
+                  "naturally would: follow up on what the agent says, ask related things, change your mind."]
     if case.initial_params:
         lines += ["", "[WHAT YOU KNOW UP FRONT]"]
         lines += [f"  {p.name}: {p.value}   ({p.description})" for p in case.initial_params]
